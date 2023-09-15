@@ -1,3 +1,5 @@
+# Test Stable Coin
+
 1. Relative Stability: Anchored or Pegged -> $1.00 
 2. Stability Mechanism -> Minting: Algorithmic  
     1. People can only mint the stable coin with enough collateral
