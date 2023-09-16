@@ -6,6 +6,7 @@ import {Ownable} from "@openzeppelin/access/Ownable.sol";
 import {TestStableCoin} from "./TestStableCoin.sol";
 import {ReentrancyGuard} from "@openzeppelin/security/ReentrancyGuard.sol";
 import {IERC20} from "@openzeppelin/interfaces/IERC20.sol";
+import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
 
 /**
  * @title Test Stable Coin Engine
@@ -26,11 +27,20 @@ contract TSCEngine is ReentrancyGuard {
     error DSCEngine__ZeroAmount();
     error DSCEngine__TokenNotAllowed();
     error DSCEngine__TransferCollateralFailed();
+    error DSCEngine__HealthFactorBroken();
+    error DSCEngine__TransferMintFailed();
+
+    uint256 private constant ADDITIONAL_FEED_PRECISION = 1e10;
+    uint256 private constant PRECISION = 1e18;
+    uint256 private constant LIQUIDATION_THRESHOLD = 50;
+    uint256 private constant LIQUIDATION_PRECISION = 100;
+    uint256 private constant MIN_HEALTH_FACTOR = 1;
+    uint256 public immutable i_totalCollaterals;
 
     mapping(address token => address priceFeed) private s_priceFeed;
     mapping(address user => mapping(address token => uint256 amount)) private s_depositedCollateral;
     mapping(address user => uint256 amountTSCMinted) private s_TSCMinted;
-    
+    mapping(uint256 index => address token) private s_collateralTokens;
 
     event CollateralDeposit(address indexed user, address indexed collateral, uint256);
 
@@ -48,12 +58,15 @@ contract TSCEngine is ReentrancyGuard {
         _;
     }
 
-    constructor(address[] memory _tokenAddresses, address[] memory _priceFeedAddresses) {
-        if (_tokenAddresses.length != _priceFeedAddresses.length) {
+    constructor(uint256 _numberOfTokens, address[] memory _tokenAddresses, address[] memory _priceFeedAddresses) {
+        uint256 _tokenAddressesLength = _tokenAddresses.length;
+        if (_tokenAddressesLength != _priceFeedAddresses.length || _tokenAddressesLength != _numberOfTokens) {
             revert DSCEngine__TokenAdressAndPriceFeedAddressLengthMismatched();
         }
-        for (uint256 i = 0; i < _tokenAddresses.length; i++) {
+        i_totalCollaterals = _numberOfTokens;
+        for (uint256 i = 0; i < i_totalCollaterals; i++) {
             s_priceFeed[_tokenAddresses[i]] = _priceFeedAddresses[i];
+            s_collateralTokens[i] = _tokenAddresses[i];
         }
     }
 
@@ -80,15 +93,17 @@ contract TSCEngine is ReentrancyGuard {
     function burnTSC() external {}
 
     /**
-     * 
+     *
      * @param _amount amount of TSC to be minted
      * @notice making sure the user doesn't mints $$$ (TSC) more than the ($$$) collateral deposited.
-     * 
+     *
      */
     function mintTSC(uint256 _amount) external moreThanZero(_amount) {
-        //check if user haven't minted more than the collateral deposited.
         s_TSCMinted[msg.sender] += _amount;
+        //check if user haven't minted more than the collateral deposited.
         _revertIfHealthFactorBroken(msg.sender);
+        bool minted = i_tsc.mint(msg.sender, _amount);
+        if (!minted) revert DSCEngine__TransferMintFailed();
     }
 
     function liquidate() external {}
@@ -98,27 +113,52 @@ contract TSCEngine is ReentrancyGuard {
 
     // Internal functions
 
-    function _getAccountInfo(address _user) internal view returns (uint256 totalTSCMinted,uint256 totalCollateralValue) {
+    function _getAccountInfo(address _user)
+        internal
+        view
+        returns (uint256 totalTSCMinted, uint256 totalCollateralValue)
+    {
         totalTSCMinted = s_TSCMinted[_user];
         totalCollateralValue = getAccountCollateralValue(_user);
-        return (totalTSCMinted,totalCollateralValue);
+        return (totalTSCMinted, totalCollateralValue);
     }
 
     /**
      * returns how close to liquidation a user is.
-     * If a user goes below 1, it will get liquidated. 
+     * If a user goes below 1, it will get liquidated.
      */
 
     function _healthFactor(address _user) internal view returns (uint256) {
         (uint256 totalTSCMinted, uint256 totalCollateralValue) = _getAccountInfo(_user);
+        uint256 adjustedCollateral = (totalCollateralValue * LIQUIDATION_THRESHOLD) / LIQUIDATION_PRECISION;
+        return (adjustedCollateral * PRECISION) / totalTSCMinted;
     }
 
-    function _revertIfHealthFactorBroken(address _user)  internal view {
-
+    function _revertIfHealthFactorBroken(address _user) internal view {
+        uint256 healthFactor = _healthFactor(_user);
+        if (healthFactor < MIN_HEALTH_FACTOR) revert DSCEngine__HealthFactorBroken();
     }
 
-    function getAccountCollateralValue()  external view returns (uint256 valueInUsd) {
-        
-        return 
+    /**
+     * returns the value in USD for whole collateral of the user.
+     */
+
+    function getAccountCollateralValue(address _user) public view returns (uint256 valueInUSD) {
+        for (uint256 i = 0; i < i_totalCollaterals; i++) {
+            address token = s_collateralTokens[i];
+            uint256 amount = s_depositedCollateral[_user][token];
+            valueInUSD += getUSDValue(token, amount);
+        }
+        return valueInUSD;
+    }
+
+    /**
+     * returns the value in USD for a any quantity of a token
+     */
+
+    function getUSDValue(address _token, uint256 _amount) public view returns (uint256) {
+        AggregatorV3Interface priceFeed = AggregatorV3Interface(s_priceFeed[_token]);
+        (, int256 price,,,) = priceFeed.latestRoundData();
+        return (((uint256(price) * ADDITIONAL_FEED_PRECISION) * _amount) / PRECISION);
     }
 }
