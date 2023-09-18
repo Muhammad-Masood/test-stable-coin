@@ -7,6 +7,7 @@ import {TestStableCoin} from "./TestStableCoin.sol";
 import {ReentrancyGuard} from "@openzeppelin/security/ReentrancyGuard.sol";
 import {IERC20} from "@openzeppelin/interfaces/IERC20.sol";
 import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
+import {console} from "lib/forge-std/src/console.sol";
 
 /**
  * @title Test Stable Coin Engine
@@ -29,10 +30,11 @@ contract TSCEngine is ReentrancyGuard {
     error DSCEngine__TransferCollateralFailed();
     error DSCEngine__HealthFactorBroken();
     error DSCEngine__TransferMintFailed();
+    error DSCEngine__TransferTSCFailed();
 
     uint256 private constant ADDITIONAL_FEED_PRECISION = 1e10;
     uint256 private constant PRECISION = 1e18;
-    uint256 private constant LIQUIDATION_THRESHOLD = 50;
+    uint256 private constant LIQUIDATION_THRESHOLD = 150;
     uint256 private constant LIQUIDATION_PRECISION = 100;
     uint256 private constant MIN_HEALTH_FACTOR = 1;
     uint256 public immutable i_totalCollaterals;
@@ -42,7 +44,8 @@ contract TSCEngine is ReentrancyGuard {
     mapping(address user => uint256 amountTSCMinted) private s_TSCMinted;
     mapping(uint256 index => address token) private s_collateralTokens;
 
-    event CollateralDeposit(address indexed user, address indexed collateral, uint256);
+    event CollateralDeposit(address indexed user, address indexed collateralAddress, uint256 indexed amount);
+    event RedeemCollateral(address indexed user, address indexed collateralAddress, uint256 indexed amount);
 
     TestStableCoin private immutable i_tsc;
 
@@ -70,14 +73,21 @@ contract TSCEngine is ReentrancyGuard {
         }
     }
 
+    function depositCollateralAndMintTSC(address _collateralAdress, uint256 _collateralAmount, uint256 _mintAmount)
+        external
+    {
+        depositCollateral(_collateralAdress, _collateralAmount);
+        mintTSC(_mintAmount);
+    }
+
     /**
      * @notice follows CEI
      * @param _collateralAdress address of the collateral i.e weth or wbtc that needs to be deposited.
      * @param _collateralAmount amount of the collateral to be deposited.
      */
 
-    function depositCollateralAndMintTSC(address _collateralAdress, uint256 _collateralAmount)
-        external
+    function depositCollateral(address _collateralAdress, uint256 _collateralAmount)
+        public
         moreThanZero(_collateralAmount)
         isAllowedCollateral(_collateralAdress)
         nonReentrant
@@ -88,9 +98,35 @@ contract TSCEngine is ReentrancyGuard {
         if (!success) revert DSCEngine__TransferCollateralFailed();
     }
 
-    function redeemCollateralForTSC() external {}
+    function redeemCollateralForTSC(address _collateralAddress, uint256 _amountCollateral, uint256 _amountTSC) external {
+        redeemCollateral(_collateralAddress, _amountCollateral);
+        burnTSC(_amountTSC);
+    }
 
-    function burnTSC() external {}
+    /**
+     * In order to redeem:
+     * Health factor should be > 1
+     */
+
+    function redeemCollateral(address _collateralAddress, uint256 _amountCollateral)
+        public
+        moreThanZero(_amountCollateral)
+        isAllowedCollateral(_collateralAddress)
+    {
+        s_depositedCollateral[msg.sender][_collateralAddress] -= _amountCollateral;
+        emit RedeemCollateral(msg.sender,_collateralAddress,_amountCollateral);
+        bool success = IERC20(_collateralAddress).transfer(msg.sender,_amountCollateral);
+        if(!success) revert DSCEngine__TransferCollateralFailed();
+        _revertIfHealthFactorBroken(msg.sender);
+
+    }
+
+    function burnTSC(uint256 _amount) public moreThanZero(_amount) {
+        s_TSCMinted[msg.sender] -= _amount;
+        bool success = i_tsc.transferFrom(msg.sender,address(this),_amount);
+        if(!success) revert DSCEngine__TransferTSCFailed();
+        i_tsc.burn(_amount);
+    }
 
     /**
      *
@@ -98,7 +134,7 @@ contract TSCEngine is ReentrancyGuard {
      * @notice making sure the user doesn't mints $$$ (TSC) more than the ($$$) collateral deposited.
      *
      */
-    function mintTSC(uint256 _amount) external moreThanZero(_amount) {
+    function mintTSC(uint256 _amount) public moreThanZero(_amount) {
         s_TSCMinted[msg.sender] += _amount;
         //check if user haven't minted more than the collateral deposited.
         _revertIfHealthFactorBroken(msg.sender);
@@ -126,11 +162,13 @@ contract TSCEngine is ReentrancyGuard {
     /**
      * returns how close to liquidation a user is.
      * If a user goes below 1, it will get liquidated.
+     * We will be keeping collateralization ratio at 150%
+     * This means if the user wants to mint 100 TSC, it will have to deposit 150$ as collateral 
      */
 
     function _healthFactor(address _user) internal view returns (uint256) {
         (uint256 totalTSCMinted, uint256 totalCollateralValue) = _getAccountInfo(_user);
-        uint256 adjustedCollateral = (totalCollateralValue * LIQUIDATION_THRESHOLD) / LIQUIDATION_PRECISION;
+        uint256 adjustedCollateral = (totalCollateralValue / (LIQUIDATION_THRESHOLD / LIQUIDATION_PRECISION));
         return (adjustedCollateral * PRECISION) / totalTSCMinted;
     }
 
@@ -160,5 +198,13 @@ contract TSCEngine is ReentrancyGuard {
         AggregatorV3Interface priceFeed = AggregatorV3Interface(s_priceFeed[_token]);
         (, int256 price,,,) = priceFeed.latestRoundData();
         return (((uint256(price) * ADDITIONAL_FEED_PRECISION) * _amount) / PRECISION);
+    }
+
+    function getDepositedCollateral(address _token) public view returns (uint256) {
+        return s_depositedCollateral[msg.sender][_token];
+    }
+
+    function getTSCMinted() public view returns (uint256){
+        return s_TSCMinted[msg.sender];
     }
 }

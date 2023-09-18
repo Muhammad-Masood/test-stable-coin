@@ -16,7 +16,7 @@ import {Ownable} from "@openzeppelin/access/Ownable.sol";
  */
 
 contract TestStableCoin is ERC20Burnable, Ownable {
-    error TestStableCoin__BurnAmountLessThanZero();
+    error TestStableCoin__BurnAmountZero();
     error TestStableCoin__InsufficientBalance();
     error TestStableCoin__ZeroAddress();
     error TestStableCoin__InvalidMintAmount();
@@ -24,9 +24,9 @@ contract TestStableCoin is ERC20Burnable, Ownable {
     constructor() ERC20("TestStableCoin", "TSC") {}
 
     function burn(uint256 _amount) public override onlyOwner {
-        uint256 balance = balanceOf(msg.sender);
-        if (_amount <= 0) revert TestStableCoin__BurnAmountLessThanZero();
-        if (balance < _amount) revert TestStableCoin__InsufficientBalance();
+        // uint256 balance = balanceOf(msg.sender);
+        if (_amount == 0) revert TestStableCoin__BurnAmountZero();
+        // if (balance < _amount) revert TestStableCoin__InsufficientBalance();
         super.burn(_amount);
     }
 
