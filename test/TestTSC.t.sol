@@ -18,23 +18,36 @@ contract TestStableCoinTest is Test {
     ERC20Mock private erc20Mock;
     // TSCScript private tscScript;
 
-    error DSCEngine__ZeroAmount();
-    error DSCEngine__TokenNotAllowed();
-
     address wETH;
+    address wBTC;
+    address wETHPriceFeed;
+    address wBTCPriceFeed;
+    address [] tokenAddresses;
+    address [] priceFeedAddresses;
+
     address user = makeAddr("user");
-    uint256 depositCollateralAmount = 1e18;
+    uint256 depositCollateralAmount = 10e18;
+    uint256 mintTSCAmount = 13000e18;
     uint256 private constant STARTING_WETH_BALANCE = 100e18;
 
     function setUp() external {
         TSCScript tscScript = new TSCScript();
         (tsc, tscEngine, config) = tscScript.run();
-        (wETH,,,,) = config.getActiveNetworkConfig();
+        (wETH,wBTC,wETHPriceFeed,wETHPriceFeed,) = config.getActiveNetworkConfig();
         vm.prank(address(tscScript));
         ERC20Mock(wETH).transfer(user, STARTING_WETH_BALANCE);
         console.log("wETH balance", ERC20Mock(wETH).balanceOf(address(tscScript)));
-        console.log("user balance: ",ERC20Mock(wETH).balanceOf(user));
-        console.log("test contract: ",address(this));
+        console.log("user wETH balance: ", ERC20Mock(wETH).balanceOf(address(this)));
+    }
+
+    // Constructor 
+
+    function testTokenAddressAndPriceFeedAddressLengthMatch() public {
+        tokenAddresses.push(wETH);
+        tokenAddresses.push(wBTC);
+        priceFeedAddresses.push(wETHPriceFeed);
+        vm.expectRevert(TSCEngine.DSCEngine__TokenAdressAndPriceFeedAddressLengthMismatched.selector);
+        new TSCEngine(tokenAddresses,priceFeedAddresses);
     }
 
     function testCorrectUSDPrice() public {
@@ -45,43 +58,106 @@ contract TestStableCoinTest is Test {
         assertEq(getETHUSDPrice, expectedUSDPrice);
     }
 
+    function testGetCollateralAmountFromUSD() public {
+        // 100$ TSC -> ETH?
+        // 2000 USD/ETH -> 100/2000 = 0.05 ETH
+        uint256 tokenAmount = 100 ether;
+        uint256 expectedETHAmount = 0.05 ether;
+        uint256 amountETH = tscEngine.getCollateralAmountFromUSD(wETH,tokenAmount);
+        assertEq(amountETH, expectedETHAmount);
+    }
+
     // deposit collateral
+
+    modifier depositCollateral(address _collateral, uint256 _collateralAmount) {
+        vm.startPrank(user);
+        ERC20Mock(_collateral).approve(address(tscEngine), _collateralAmount);
+        tscEngine.depositCollateral(_collateral, _collateralAmount);
+        vm.stopPrank();
+        _;
+    }
+
+    modifier mintTSC(uint256 _mintAmount) {
+        vm.prank(user);
+        tscEngine.mintTSC(_mintAmount);
+        _;
+    }
 
     function testRevertIfCollateralZero() public {
         vm.prank(user);
-        vm.expectRevert(DSCEngine__ZeroAmount.selector);
+        vm.expectRevert(TSCEngine.DSCEngine__ZeroAmount.selector);
         tscEngine.depositCollateral(wETH, 0);
     }
 
     function testRevertIfCollateralNotAllowed() public {
-        address newCollateral = 0x958b482c4E9479a600bFFfDDfe94D974951Ca3c7;
+        ERC20Mock newCollateral = new ERC20Mock("NewToken","new",user,depositCollateralAmount);
         vm.prank(user);
-        vm.expectRevert(DSCEngine__TokenNotAllowed.selector);
-        tscEngine.depositCollateral(newCollateral, depositCollateralAmount);
+        vm.expectRevert(TSCEngine.DSCEngine__TokenNotAllowed.selector);
+        tscEngine.depositCollateral(address(newCollateral), depositCollateralAmount);
     }
 
     function testDepositCollateralIfCollateralNotZeroAndAllowed() public {
-        // user should have the required collateral amount
         vm.startPrank(user);
-        uint256 beforeCollateralAmount = tscEngine.getDepositedCollateral(wETH);
-        ERC20Mock(wETH).approve(address(tscEngine), depositCollateralAmount);
-        tscEngine.depositCollateral(wETH, depositCollateralAmount);
-        uint256 expectedCollateralAmount = beforeCollateralAmount + depositCollateralAmount;
-        assertEq(tscEngine.getDepositedCollateral(wETH),expectedCollateralAmount);
+        uint256 totalTSCMinted_before = 0;
+        uint256 collateralValueInUSD_before = 0;
+        address collateral = wETH;
+        uint256 collateralAmountToDeposit = depositCollateralAmount;
+        // uint256 beforeCollateralAmount = tscEngine.getDepositedCollateral(wETH);
+        ERC20Mock(wETH).approve(address(tscEngine), collateralAmountToDeposit);
+        tscEngine.depositCollateral(collateral, collateralAmountToDeposit);
+        
+        uint256 expectedTSCMinted = totalTSCMinted_before; //only depositing
+        uint256 expectedCollateralValueInUSD = collateralValueInUSD_before + tscEngine.getUSDValue(collateral, collateralAmountToDeposit);
+
+        (uint256 totalTSCMinted, uint256 collateralValueInUSD) = tscEngine.getAccountInfo(user);
+
+        assertEq(totalTSCMinted,expectedTSCMinted);
+        assertEq(collateralValueInUSD, expectedCollateralValueInUSD);
+
         vm.stopPrank();
     }
 
     // mint tsc
 
-    function testMintTSC() public {
-        // console.log()
-        uint256 mintAmount = 10e18;
-        vm.startPrank(user);
-        uint256 prevTSCMinted = tscEngine.getTSCMinted();
+    function testRevertIfHealthFactorBroken() public depositCollateral(wETH, depositCollateralAmount) {
+        // collateral: 20,000$ -> 20000/1.5 -> mint: 13,333$ TSC 
+        uint256 mintAmount = 14000 ether;
+        vm.expectRevert(TSCEngine.DSCEngine__HealthFactorBroken.selector);
         tscEngine.mintTSC(mintAmount);
-        console.log(tscEngine.getTSCMinted());
-        // uint256 expectedTSCMinted = prevTSCMinted + mintAmount;
-        // assertEq(tscEngine.getTSCMinted(), expectedTSCMinted);
+    }
+
+
+    function testMintTSC() public depositCollateral(wETH,depositCollateralAmount) {
+        // deposit: 10 wETH -> 20,000$
+        vm.startPrank(user);
+        (uint256 totalTSCMinted_before,uint256 value_before) = tscEngine.getAccountInfo(user);
+        console.log("total tsc minted before: ", totalTSCMinted_before, value_before);
+        tscEngine.mintTSC(mintTSCAmount);
+        (uint256 totalTSCMinted_current, uint256 value_after) = tscEngine.getAccountInfo(user);
+        console.log("total tsc minted after: ", totalTSCMinted_current, value_after);
+        vm.stopPrank();
+        uint256 expctedMintedTSC = totalTSCMinted_before + mintTSCAmount;
+        assertEq(totalTSCMinted_current,expctedMintedTSC);
+    }
+
+    function testRedeemCollateralFailedIfHealthFactorBreaks() public depositCollateral(wETH,depositCollateralAmount) mintTSC(mintTSCAmount) {
+        // deposit: 10 wETH/20,000$ -> mint: 13,000$ -> redeem: 0.5 wETH/1000$
+        uint256 redeemCollateralAmount = 0.5 ether;
+        vm.startPrank(user);
+        vm.expectRevert(TSCEngine.DSCEngine__HealthFactorBroken.selector);
+        tscEngine.redeemCollateral(wETH, redeemCollateralAmount);
+        vm.stopPrank();
+    }
+    
+    function testRedeemCollateral() public depositCollateral(wETH,depositCollateralAmount) mintTSC(mintTSCAmount) {
+        // 13333 - 13000 = 333 -> 300$/0.15 wETH
+        uint256 redeemCollateralAmount = 0.15 ether;
+       
+        vm.startPrank(user);
+        uint256 collateralAmount_before = tscEngine.getDepositedCollateral(wETH);
+        // vm.expectEmit(true,true,true,false, address(tscEngine));
+        // emit TSCEngine.RedeemCollateral(user,wETH,redeemCollateralAmount);
+        tscEngine.redeemCollateral(wETH, redeemCollateralAmount);
         vm.stopPrank();
     }
 }

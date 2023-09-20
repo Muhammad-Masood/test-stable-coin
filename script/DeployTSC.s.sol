@@ -20,7 +20,7 @@ contract TSCScript is Script {
             tokensAddresses = [wETH, wBTC];
             priceFeedsAddresses = [wETHPriceFeed, wBTCPriceFeed];
         vm.startBroadcast(deployerKey);
-        TSCEngine tscEngine = new TSCEngine(NUMBER_OF_TOKENS, tokensAddresses, priceFeedsAddresses);
+        TSCEngine tscEngine = new TSCEngine(tokensAddresses, priceFeedsAddresses);
         vm.stopBroadcast();
 
         vm.startBroadcast(address(tscEngine));
