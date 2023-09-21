@@ -20,12 +20,14 @@ contract TSCScript is Script {
             tokensAddresses = [wETH, wBTC];
             priceFeedsAddresses = [wETHPriceFeed, wBTCPriceFeed];
         vm.startBroadcast(deployerKey);
-        TSCEngine tscEngine = new TSCEngine(tokensAddresses, priceFeedsAddresses);
+        TestStableCoin testStableCoin = new TestStableCoin();
+        TSCEngine tscEngine = new TSCEngine(testStableCoin, tokensAddresses, priceFeedsAddresses);
+        testStableCoin.transferOwnership(address(tscEngine));
         vm.stopBroadcast();
 
-        vm.startBroadcast(address(tscEngine));
-        TestStableCoin testStableCoin = new TestStableCoin();
-        vm.stopBroadcast();
+        // vm.startBroadcast(address(tscEngine));
+        // TestStableCoin testStableCoin = new TestStableCoin();
+        // vm.stopBroadcast();
 
         console.log("TSC owner: ", testStableCoin.owner());
         uint256 engineTSCBalance = IERC20(address(testStableCoin)).balanceOf(address(tscEngine));

@@ -63,8 +63,8 @@ contract TSCEngine is ReentrancyGuard {
         _;
     }
 
-    constructor(address[] memory _tokenAddresses, address[] memory _priceFeedAddresses) {
-        i_tsc = new TestStableCoin();
+    constructor(TestStableCoin _tsc, address[] memory _tokenAddresses, address[] memory _priceFeedAddresses) {
+        i_tsc = _tsc;
         uint256 _tokenAddressesLength = _tokenAddresses.length;
         if (_tokenAddressesLength != _priceFeedAddresses.length) {
             revert DSCEngine__TokenAdressAndPriceFeedAddressLengthMismatched();
@@ -119,7 +119,7 @@ contract TSCEngine is ReentrancyGuard {
     }
 
     function burnTSC(uint256 _amount) public moreThanZero(_amount) {
-        _burn(_amount, msg.sender, msg.sender);        
+        _burn(_amount, msg.sender, msg.sender);
     }
 
 
