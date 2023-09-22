@@ -114,8 +114,10 @@ contract TSCEngine is ReentrancyGuard {
         public
         moreThanZero(_amountCollateral)
         isAllowedCollateral(_collateralAddress)
+        nonReentrant
     {
         _redeemCollateral(_collateralAddress,_amountCollateral,msg.sender,msg.sender);
+        _revertIfHealthFactorBroken(msg.sender);
     }
 
     function burnTSC(uint256 _amount) public moreThanZero(_amount) {
@@ -141,11 +143,10 @@ contract TSCEngine is ReentrancyGuard {
      * @notice liquidators -> anyone who is interested in paying the dept of undercollaterlized user.
      * @notice this system only works if it is over collateralized i.e if the collateraliztion is 100% or below that then we won't be able to incentivize the liquidators.
      * @notice the liquidators will be rewarded by a bonus to liquidate the undercollateralized users.
-     * @param _addressCollateral address of the collateral i.e weth or wbtc that needs to be deposited.
      * @param _user address of the user.
      * @param _deptTSCAmount amount of the dept in TSC to cover user's health factor
      */
-    function liquidate(address _addressCollateral, address _user, uint256 _deptTSCAmount) external moreThanZero(_deptTSCAmount) nonReentrant {
+    function liquidate(address _collateral, address _user, uint256 _deptTSCAmount) external moreThanZero(_deptTSCAmount) nonReentrant {
         bool isLiquidatale = _healthFactor(_user) < MIN_HEALTH_FACTOR;
         if(!isLiquidatale) revert DSCEngine__HealthFactorOK();
         // 150$ ETH -> mints 100$ TSC
@@ -153,15 +154,12 @@ contract TSCEngine is ReentrancyGuard {
         // Difference/Debt: 100$ -> liquidators to purchase this collateral
         // 100$ -> 10% discount -> 100$ - 10$ -> 90$ ETH in exchange of 90$ TSC
         // how much amount of ETH?? USD -> amount of ETH -> USD/ETH (2000/1) -> ETH/USD
-        uint256 collateralAmount = getCollateralAmountFromUSD(_addressCollateral, _deptTSCAmount);
-        uint256 bonusCollateral = (collateralAmount * LIQUIDATION_BONUS)/LIQUIDATION_PRECISION; 
-        _redeemCollateral(_addressCollateral, collateralAmount + bonusCollateral, _user, msg.sender);
+        uint256 collateralAmount = getCollateralAmountFromUSD(_collateral, _deptTSCAmount);
+        uint256 bonusCollateral = (collateralAmount * LIQUIDATION_BONUS)/LIQUIDATION_PRECISION;
+        _redeemCollateral(_collateral, collateralAmount + bonusCollateral, _user, msg.sender);
         _burn(_deptTSCAmount, _user, msg.sender);
         _revertIfHealthFactorBroken(msg.sender);
     }
-
-    // function
-    // function
 
     // Internal functions
 
@@ -184,6 +182,7 @@ contract TSCEngine is ReentrancyGuard {
 
     function _healthFactor(address _user) internal view returns (uint256) {
         (uint256 totalTSCMinted, uint256 totalCollateralValue) = _getAccountInfo(_user);
+        if(totalTSCMinted == 0) return type(uint256).max;
         uint256 adjustedCollateral = (totalCollateralValue / ((LIQUIDATION_THRESHOLD*PRECISION) / LIQUIDATION_PRECISION));
         console.log("tsc",totalTSCMinted);
         return ((adjustedCollateral*PRECISION / totalTSCMinted)*PRECISION);
@@ -199,12 +198,11 @@ contract TSCEngine is ReentrancyGuard {
      * @notice this is a private function to redeem collateral.
      * @notice only use it inside a function.
      */
-    function _redeemCollateral(address _collateralAddress, uint256 _amountCollateral, address _user, address _to) private {
-        s_depositedCollateral[_user][_collateralAddress] -= _amountCollateral;
-        emit RedeemCollateral(_user,_collateralAddress,_amountCollateral);
-        bool success = IERC20(_collateralAddress).transfer(_to,_amountCollateral);
+    function _redeemCollateral(address _collateralAddress, uint256 _amountCollateral, address _onBehalfOf, address _from) private{
+        s_depositedCollateral[_onBehalfOf][_collateralAddress] -= _amountCollateral;
+        emit RedeemCollateral(_onBehalfOf,_collateralAddress,_amountCollateral);
+        bool success = IERC20(_collateralAddress).transfer(_from,_amountCollateral);
         if(!success) revert DSCEngine__TransferCollateralFailed();
-        _revertIfHealthFactorBroken(_to);
     }
 
     function _burn(uint256 _amountToBurn, address _user, address _from) private {
@@ -260,6 +258,34 @@ contract TSCEngine is ReentrancyGuard {
     
     function getDepositedCollateral(address _collateral) external view  returns (uint256) {
         return s_depositedCollateral[msg.sender][_collateral];
+    }
+
+    function getCollateralToken(uint256 _index) external view returns (address) {
+        return s_collateralTokens[_index];
+    }
+
+    function getPriceFeed(address _token) external view returns (address) {
+        return s_priceFeed[_token];
+    }
+
+    function getLiquidationThreshold() external view returns (uint256) {
+        return LIQUIDATION_THRESHOLD;
+    }
+
+    function getLiquidationPrecision() external view returns (uint256) {
+        return LIQUIDATION_PRECISION;
+    }
+
+    function getLiquidationBonus() external view returns (uint256) {
+        return LIQUIDATION_BONUS;
+    }
+
+    function getMinimumHealthFactor() external view returns (uint256) {
+        return MIN_HEALTH_FACTOR;
+    }
+
+    function getTotalCollaterals() external view returns (uint256) {
+        return i_totalCollaterals;
     }
 
 }

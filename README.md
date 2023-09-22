@@ -6,4 +6,5 @@
 3. Collateral: Exogenous
     1. wETH
     2. wBTC
-    
+
+What are our invariants/properties?
