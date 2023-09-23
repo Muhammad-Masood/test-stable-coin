@@ -21,13 +21,14 @@ contract OpenInvariantsTest is StdInvariant, Test {
     ERC20Mock private erc20Mock;
     address wETH;
     address wBTC;
+    HandlerTest handler;
 
     function setUp() external {
         TSCScript tscScript = new TSCScript();
         (tsc, tscEngine, config) = tscScript.run();
         (wETH, wBTC,,,) = config.getActiveNetworkConfig();
         // targetContract(address(tscEngine));
-        HandlerTest handler = new HandlerTest(tsc,tscEngine);
+        handler = new HandlerTest(tsc,tscEngine);
         targetContract(address(handler));
         // console.log("total supply: ", tsc.totalSupply());
     }
@@ -40,6 +41,9 @@ contract OpenInvariantsTest is StdInvariant, Test {
         uint256 wETHDepositedValue = tscEngine.getUSDValue(wETH, wETHDeposited);
         uint256 wBTCDepositedValue = tscEngine.getUSDValue(wBTC, wBTCDeposited);
         uint256 totalCollateralValue = wETHDepositedValue + wBTCDepositedValue;
+        console.log("totalSupply", totalSupply);
+        console.log("total collateral value", totalCollateralValue);
+        console.log("times mint is called", handler.timesMintIsCalled());
         assert(totalCollateralValue >= totalSupply);
     }
 }

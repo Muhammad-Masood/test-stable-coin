@@ -32,9 +32,6 @@ contract TSCScript is Script {
         console.log("TSC owner: ", testStableCoin.owner());
         uint256 engineTSCBalance = IERC20(address(testStableCoin)).balanceOf(address(tscEngine));
         console.log("TSC Engine balance: ", engineTSCBalance);
-        console.log("Helper config deployed: ", address(config));
-        console.log ("msg.sender from deploy script", msg.sender);
-        console.log("Deploy script contract: ", address(this));
         return (testStableCoin, tscEngine, config);
     }
 }

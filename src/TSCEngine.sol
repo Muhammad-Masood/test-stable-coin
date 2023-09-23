@@ -8,6 +8,7 @@ import {ReentrancyGuard} from "@openzeppelin/security/ReentrancyGuard.sol";
 import {IERC20} from "@openzeppelin/interfaces/IERC20.sol";
 import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
 import {console} from "lib/forge-std/src/console.sol";
+import {OracleLib} from "./libraries/OracleLib.sol";
 
 /**
  * @title Test Stable Coin Engine
@@ -33,6 +34,8 @@ contract TSCEngine is ReentrancyGuard {
     error DSCEngine__TransferTSCFailed();
     error DSCEngine__HealthFactorOK();
 
+    using OracleLib for AggregatorV3Interface;
+    
     uint256 private constant ADDITIONAL_FEED_PRECISION = 1e10;
     uint256 private constant PRECISION = 1e18;
     uint256 private constant LIQUIDATION_THRESHOLD = 150;
